@@ -33,7 +33,7 @@ bool verifyPayload (String* line){
   
 }
 
-bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> doc) {
+bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC>& doc) {
   
   if (!doc.containsKey("error")) return false;
   
@@ -150,7 +150,15 @@ stratum_method parse_mining_method(String line)
     if (!doc.containsKey("method")) {
       // "error":null means success
       if (doc["error"].isNull())
+      {
+        // "result":false ohne Fehlerobjekt = abgelehnter Share bzw. fehlgeschlagene Authorize
+        if (doc["result"].is<bool>() && !doc["result"].as<bool>())
+        {
+          Serial.println("  Pool replied result=false (rejected)");
+          return STRATUM_PARSE_ERROR;
+        }
         return STRATUM_SUCCESS;
+      }
       else
         return STRATUM_UNKNOWN;
     }

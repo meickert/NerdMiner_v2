@@ -54,6 +54,8 @@ void setup_monitor(void){
 #endif
 }
 
+#define RETRY_AFTER_FAIL_ms 30000UL
+
 unsigned long mGlobalUpdate =0;
 
 void updateGlobalData(void){
@@ -62,6 +64,7 @@ void updateGlobalData(void){
     
         if (WiFi.status() != WL_CONNECTED) return;
             
+        mGlobalUpdate = millis() - (UPDATE_Global_min) * 60UL * 1000UL + RETRY_AFTER_FAIL_ms; // Fehlschlag: erst in 30 s erneut versuchen
         //Make first API call to get global hash and current difficulty
         HTTPClient http;
         http.setTimeout(10000);
@@ -128,6 +131,7 @@ String getBlockHeight(void){
     
         if (WiFi.status() != WL_CONNECTED) return current_block;
             
+        mHeightUpdate = millis() - (UPDATE_Height_min) * 60UL * 1000UL + RETRY_AFTER_FAIL_ms; // Fehlschlag: erst in 30 s erneut versuchen
         HTTPClient http;
         http.setTimeout(10000);
         try {
@@ -163,6 +167,7 @@ String getBTCprice(void){
             snprintf(price_buffer, sizeof(price_buffer), "$%u", bitcoin_price);
             return String(price_buffer);
         }
+        mBTCUpdate = millis() - UPDATE_BTC_min * 60UL * 1000UL + RETRY_AFTER_FAIL_ms; // Fehlschlag: erst in 30 s erneut versuchen
         
         HTTPClient http;
         http.setTimeout(10000);
@@ -208,10 +213,14 @@ void getTime(unsigned long* currentHours, unsigned long* currentMinutes, unsigne
   
   //Check if need an NTP call to check current time
   if((mTriggerUpdate == 0) || (millis() - mTriggerUpdate > UPDATE_PERIOD_h * 60 * 60 * 1000)){ //60 sec. * 60 min * 1000ms
-    if(WiFi.status() == WL_CONNECTED) {
-        if(timeClient.update()) mTriggerUpdate = millis(); //NTP call to get current time
-        initialTime = timeClient.getEpochTime(); // Guarda la hora inicial (en segundos desde 1970)
-        Serial.print("TimeClient NTPupdateTime ");
+    static unsigned long lastNtpAttempt = 0;
+    if(WiFi.status() == WL_CONNECTED && (lastNtpAttempt == 0 || millis() - lastNtpAttempt > RETRY_AFTER_FAIL_ms)) {
+        lastNtpAttempt = millis();
+        if(timeClient.update()) {            //NTP call to get current time
+            mTriggerUpdate = millis();
+            initialTime = timeClient.getEpochTime(); // Guarda la hora inicial (en segundos desde 1970)
+            Serial.print("TimeClient NTPupdateTime ");
+        }
     }
   }
 
@@ -440,6 +449,7 @@ pool_data getPoolData(void){
     //pool_data pData;    
     if((mPoolUpdate == 0) || (millis() - mPoolUpdate > UPDATE_POOL_min * 60 * 1000)){      
         if (WiFi.status() != WL_CONNECTED) return pData;            
+        mPoolUpdate = millis() - (UPDATE_POOL_min) * 60UL * 1000UL + RETRY_AFTER_FAIL_ms; // Fehlschlag: erst in 30 s erneut versuchen
         //Make first API call to get global hash and current difficulty
         HTTPClient http;
         http.setTimeout(10000);        

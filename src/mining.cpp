@@ -288,6 +288,7 @@ void runStratumWorker(void *name) {
       if(!tx_mining_subscribe(client, mWorker)) { 
         client.stop();
         MiningJobStop(job_pool, s_submition_map);
+        vTaskDelay(((2 + rand() % 10) * 1000) / portTICK_PERIOD_MS); // Backoff, nicht den Pool haemmern
         continue; 
       }
       
