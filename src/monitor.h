@@ -14,9 +14,11 @@
 
 //API BTC price (Update to USDT cus it's more liquidity and flow price updade)   
 
-//#define getBTCAPI "https://api.coindesk.com/v1/bpi/currentprice.json" -- doesn't work anymore
+//// Eigener BTC-Bestand fuer den Portfolio-Bildschirm
+#define PORTFOLIO_BTC 0.217582
+#define getBTCAPI "https://api.coindesk.com/v1/bpi/currentprice.json" -- doesn't work anymore
 //#define getBTCAPI "https://api.blockchain.com/v3/exchange/tickers/BTC-USDT" -- updates infrequently
-#define getBTCAPI "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+#define getBTCAPI "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd,eur"
 
 #define UPDATE_BTC_min   1
 
@@ -87,6 +89,9 @@ typedef struct {
   String blockHeight;
   String currentTime;  
   String currentDate;
+  String daysTogether;  // Tage seit 22.09.2000
+  String daysMarried;   // Tage seit 29.09.2007
+  String portfolioEur;  // Portfoliowert in EUR (PORTFOLIO_BTC * BTC/EUR-Kurs)
 }clock_data;
 
 typedef struct {

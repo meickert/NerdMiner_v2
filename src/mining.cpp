@@ -86,15 +86,26 @@ bool checkPoolConnection(void) {
   
   //Resolve first time pool DNS and save IP
   if(serverIP == IPAddress(1,1,1,1)) {
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    Serial.printf("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString());
+    IPAddress resolved;
+    if (WiFi.hostByName(Settings.PoolAddress.c_str(), resolved) != 1) {
+      Serial.println("DNS resolution failed for " + Settings.PoolAddress);
+      return false;
+    }
+    serverIP = resolved;
+    Serial.printf("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString().c_str());
   }
 
   //Try connecting pool IP
   if (!client.connect(serverIP, Settings.PoolPort)) {
     Serial.println("Imposible to connect to : " + Settings.PoolAddress);
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    Serial.printf("Resolved DNS got: %s\n", serverIP.toString());
+    // IP neu aufloesen; bei Fehlschlag alte IP behalten (nicht mit Muell ueberschreiben)
+    IPAddress resolved;
+    if (WiFi.hostByName(Settings.PoolAddress.c_str(), resolved) == 1) {
+      serverIP = resolved;
+      Serial.printf("Resolved DNS got: %s\n", serverIP.toString().c_str());
+    } else {
+      Serial.println("DNS resolution failed, keeping old IP");
+    }
     return false;
   }
 
@@ -251,6 +262,15 @@ void runStratumWorker(void *name) {
   uint32_t job_pool = 0xFFFFFFFF;
   uint32_t last_job_time = millis();
 
+  // Muessen die gesamte Task-Laufzeit leben: Nachfuell-Jobs lesen sie in
+  // Iterationen, in denen kein MINING_NOTIFY verarbeitet wurde.
+  uint32_t hw_midstate[8] = {0};
+  uint32_t diget_mid[8] = {0};
+  uint32_t bake[16] = {0};
+  #if defined(CONFIG_IDF_TARGET_ESP32)
+  uint8_t sha_buffer_swap[128] = {0};
+  #endif
+
   while(true) {
       
     if(WiFi.status() != WL_CONNECTED){
@@ -279,11 +299,12 @@ void runStratumWorker(void *name) {
       if(!tx_mining_subscribe(client, mWorker)) { 
         client.stop();
         MiningJobStop(job_pool, s_submition_map);
+        vTaskDelay(((2 + rand() % 10) * 1000) / portTICK_PERIOD_MS); // Backoff, nicht den Pool haemmern
         continue; 
       }
       
-      strcpy(mWorker.wName, Settings.BtcWallet);
-      strcpy(mWorker.wPass, Settings.PoolPassword);
+      strlcpy(mWorker.wName, Settings.BtcWallet, sizeof(mWorker.wName));
+      strlcpy(mWorker.wPass, Settings.PoolPassword, sizeof(mWorker.wPass));
       // STEP 2: Pool authorize work (Block Info)
       tx_mining_auth(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
       //tx_mining_auth2(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
@@ -320,13 +341,6 @@ void runStratumWorker(void *name) {
       }
     }
 
-    uint32_t hw_midstate[8];
-    uint32_t diget_mid[8];
-    uint32_t bake[16];
-    #if defined(CONFIG_IDF_TARGET_ESP32)
-    uint8_t sha_buffer_swap[128];
-    #endif
-
     //Read pending messages from pool
     while(client.connected() && client.available())
     {
@@ -346,7 +360,14 @@ void runStratumWorker(void *name) {
                                           }
                                           //Increse templates readed
                                           templates++;
-                                          job_pool++;
+                                          // Monoton steigende Job-ID ueber Reconnects hinweg: veraltete Ergebnisse
+                                          // einer frueheren Verbindung koennen so nie zu einem neuen Job passen.
+                                          // (0xFFFFFFFF bleibt der "kein Job"-Marker.)
+                                          {
+                                            static uint32_t s_job_counter = 0;
+                                            job_pool = s_job_counter++;
+                                            if (s_job_counter == 0xFFFFFFFF) s_job_counter = 0;
+                                          }
                                           s_working_current_job_id = job_pool & 0xFF; //Terminate current job in thread
 
                                           last_job_time = millis();
@@ -358,6 +379,10 @@ void runStratumWorker(void *name) {
 
                                           //Prepare data for new jobs
                                           mMiner=calculateMiningData(mWorker, mJob);
+                                          if (!mMiner.valid) {
+                                            Serial.println("  Job verworfen (ungueltige Daten)");
+                                            break;
+                                          }
 
                                           memset(mMiner.bytearray_blockheader+80, 0, 128-80);
                                           mMiner.bytearray_blockheader[80] = 0x80;
@@ -718,6 +743,45 @@ static inline void nerd_sha_ll_fill_text_block_sha256_inter()
   REG_WRITE(&reg_addr_buf[15], 0x00010000);
 }
 
+// Schnelle Varianten: Die Textwoerter 9..14 sind in beiden Bloecken 0 und bleiben
+// zwischen den Bloecken unveraendert (Padding). Nur nach dem ersten kompletten
+// Durchlauf eines Jobs verwenden (Registerzustand vorher unbekannt).
+static inline void nerd_sha_ll_fill_text_block_sha256_fast(const void *input_text, uint32_t nonce)
+{
+    uint32_t *data_words = (uint32_t *)input_text;
+    uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
+
+    REG_WRITE(&reg_addr_buf[0], data_words[0]);
+    REG_WRITE(&reg_addr_buf[1], data_words[1]);
+    REG_WRITE(&reg_addr_buf[2], data_words[2]);
+    REG_WRITE(&reg_addr_buf[3], nonce);
+    REG_WRITE(&reg_addr_buf[4], 0x00000080);
+    REG_WRITE(&reg_addr_buf[5], 0x00000000);
+    REG_WRITE(&reg_addr_buf[6], 0x00000000);
+    REG_WRITE(&reg_addr_buf[7], 0x00000000);
+    REG_WRITE(&reg_addr_buf[8], 0x00000000);
+    REG_WRITE(&reg_addr_buf[15], 0x80020000);
+}
+
+static inline void nerd_sha_ll_fill_text_block_sha256_inter_fast()
+{
+  uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
+
+  DPORT_INTERRUPT_DISABLE();
+  REG_WRITE(&reg_addr_buf[0], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 0 * 4));
+  REG_WRITE(&reg_addr_buf[1], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 1 * 4));
+  REG_WRITE(&reg_addr_buf[2], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 2 * 4));
+  REG_WRITE(&reg_addr_buf[3], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 3 * 4));
+  REG_WRITE(&reg_addr_buf[4], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 4 * 4));
+  REG_WRITE(&reg_addr_buf[5], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 5 * 4));
+  REG_WRITE(&reg_addr_buf[6], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4));
+  REG_WRITE(&reg_addr_buf[7], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 7 * 4));
+  DPORT_INTERRUPT_RESTORE();
+
+  REG_WRITE(&reg_addr_buf[8], 0x00000080);
+  REG_WRITE(&reg_addr_buf[15], 0x00010000);
+}
+
 static inline void nerd_sha_ll_read_digest(void* ptr)
 {
   DPORT_INTERRUPT_DISABLE();
@@ -833,18 +897,26 @@ void minerWorkerHw(void * task_id)
       esp_sha_acquire_hardware();
       REG_WRITE(SHA_MODE_REG, SHA2_256);
       uint32_t nend = job->nonce_start + job->nonce_count;
+      bool text_padding_ready = false; // erster Durchlauf: alle Textwoerter schreiben
       for (uint32_t n = job->nonce_start; n < nend; ++n)
       {
         //nerd_sha_hal_wait_idle();
         nerd_sha_ll_write_digest(digest_mid);
         //nerd_sha_hal_wait_idle();
-        nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
+        if (text_padding_ready)
+          nerd_sha_ll_fill_text_block_sha256_fast(sha_buffer, n);
+        else
+          nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
         //sha_ll_continue_block(SHA2_256);
         REG_WRITE(SHA_CONTINUE_REG, 1);
         
         sha_ll_load(SHA2_256);
         nerd_sha_hal_wait_idle();
-        nerd_sha_ll_fill_text_block_sha256_inter();
+        if (text_padding_ready)
+          nerd_sha_ll_fill_text_block_sha256_inter_fast();
+        else
+          nerd_sha_ll_fill_text_block_sha256_inter();
+        text_padding_ready = true;
         //sha_ll_start_block(SHA2_256);
         REG_WRITE(SHA_START_REG, 1);
         sha_ll_load(SHA2_256);

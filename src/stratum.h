@@ -21,7 +21,7 @@ typedef struct {
     String extranonce2;
     int extranonce2_size;
     char wName[80];
-    char wPass[20];
+    char wPass[80];
 } mining_subscribe;
 
 typedef struct {
@@ -47,7 +47,7 @@ typedef enum {
 
 unsigned long getNextId(unsigned long id);
 bool verifyPayload (String* line);
-bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> doc);
+bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC>& doc);
 
 //Method Mining.subscribe
 mining_subscribe init_mining_subscribe(void);

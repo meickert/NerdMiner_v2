@@ -33,7 +33,7 @@ bool verifyPayload (String* line){
   
 }
 
-bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC> doc) {
+bool checkError(const StaticJsonDocument<BUFFER_JSON_DOC>& doc) {
   
   if (!doc.containsKey("error")) return false;
   
@@ -56,9 +56,9 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     // Subscribe
     id = 1; //Initialize id messages
     #ifndef HAN
-    sprintf(payload, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
+    snprintf(payload, sizeof(payload), "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
     #else
-    sprintf(payload, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"HAN_SOLOminer/%s\"]}\n", id, CURRENT_VERSION);
+    snprintf(payload, sizeof(payload), "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"HAN_SOLOminer/%s\"]}\n", id, CURRENT_VERSION);
     #endif
     
     Serial.printf("[WORKER] ==> Mining subscribe\n");
@@ -67,8 +67,20 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
     
-    String line = client.readStringUntil('\n');
-    if(!parse_mining_subscribe(line, mSubscribe)) return false;
+    // Pool kann vor der Subscribe-Antwort schon andere Nachrichten schicken:
+    // bis zu 5 Zeilen lesen und die mit passender id (== Subscribe-id) nehmen.
+    bool gotSubscribe = false;
+    for (int attempt = 0; attempt < 5 && !gotSubscribe; attempt++) {
+        String line = client.readStringUntil('\n');
+        if (line.length() == 0) break; // Timeout, nichts mehr da
+        if (parse_extract_id(line) != 1) {
+            Serial.print("  Skipping non-subscribe line: "); Serial.println(line);
+            continue;
+        }
+        if (!parse_mining_subscribe(line, mSubscribe)) return false;
+        gotSubscribe = true;
+    }
+    if (!gotSubscribe) return false;
 
   
     Serial.print("    sub_details: "); Serial.println(mSubscribe.sub_details);
@@ -122,11 +134,12 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
 
     // Authorize
     id = getNextId(id);
-    sprintf(payload, "{\"params\": [\"%s\", \"%s\"], \"id\": %u, \"method\": \"mining.authorize\"}\n", 
+    snprintf(payload, sizeof(payload), "{\"params\": [\"%s\", \"%s\"], \"id\": %u, \"method\": \"mining.authorize\"}\n", 
       user, pass, id);
     
     Serial.printf("[WORKER] ==> Autorize work\n");
-    Serial.print("  Sending  : "); Serial.println(payload);
+    // Pool-Passwort nicht ins Log
+    Serial.printf("  Sending  : authorize for user %s (password hidden)\n", user);
     client.print(payload);
 
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
@@ -150,7 +163,15 @@ stratum_method parse_mining_method(String line)
     if (!doc.containsKey("method")) {
       // "error":null means success
       if (doc["error"].isNull())
+      {
+        // "result":false ohne Fehlerobjekt = abgelehnter Share bzw. fehlgeschlagene Authorize
+        if (doc["result"].is<bool>() && !doc["result"].as<bool>())
+        {
+          Serial.println("  Pool replied result=false (rejected)");
+          return STRATUM_PARSE_ERROR;
+        }
         return STRATUM_SUCCESS;
+      }
       else
         return STRATUM_UNKNOWN;
     }
@@ -212,13 +233,13 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     // Submit
     id = getNextId(id);
     submit_id = id;
-    sprintf(payload, "{\"id\":%u,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
+    snprintf(payload, sizeof(payload), "{\"id\":%u,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%08lx\"]}\n",
         id,
         mWorker.wName,//"bc1qvv469gmw4zz6qa4u4dsezvrlmqcqszwyfzhgwj", //mWorker.name,
         mJob.job_id.c_str(),
         mWorker.extranonce2.c_str(),
         mJob.ntime.c_str(),
-        String(nonce, HEX).c_str()
+        nonce
         );
     Serial.print("  Sending  : "); Serial.print(payload);
     client.print(payload);
@@ -248,7 +269,7 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
     char payload[BUFFER] = {0};
 
     id = getNextId(id);
-    sprintf(payload, "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
+    snprintf(payload, sizeof(payload), "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
     
     Serial.print("  Sending  : "); Serial.print(payload);
     return client.print(payload);

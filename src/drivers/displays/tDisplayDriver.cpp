@@ -249,6 +249,63 @@ void tDisplay_BTCprice(unsigned long mElapsed)
   background.pushSprite(0, 0);
 }
 
+// Gemeinsamer Zeichner fuer die Zusatz-Bildschirme im Design des BTC-Preis-Bildschirms:
+// grosser Hauptwert rechtsbuendig, darunter eine Beschriftung.
+static void tDisplay_ValueScreen(const clock_data &data, const char *value, const char *label)
+{
+  background.pushImage(0, 0, priceScreenWidth, priceScreenHeight, priceScreen);
+
+  // Hashrate
+  render.setFontSize(25);
+  render.setCursor(19, 122);
+  render.setFontColor(TFT_BLACK);
+  render.rdrawString(data.currentHashRate.c_str(), 94, 129, TFT_BLACK);
+
+  // Print BlockHeight
+  render.setFontSize(18);
+  render.rdrawString(data.blockHeight.c_str(), 254, 138, TFT_WHITE);
+
+  // Print Hour
+  background.setFreeFont(FSSB9);
+  background.setTextSize(1);
+  background.setTextDatum(TL_DATUM);
+  background.setTextColor(TFT_BLACK);
+  background.drawString(data.currentTime.c_str(), 222, 3, GFXFF);
+
+  // Hauptwert
+  background.setFreeFont(FF24);
+  background.setTextDatum(TR_DATUM);
+  background.setTextSize(1);
+  background.setTextColor(0xDEDB, TFT_BLACK);
+  background.drawString(value, 300, 58, GFXFF);
+
+  // Beschriftung (die Schrift hat kein Euro-Zeichen, daher Text)
+  background.setFreeFont(FSSB9);
+  background.setTextDatum(TR_DATUM);
+  background.setTextColor(0xDEDB, TFT_BLACK);
+  background.drawString(label, 300, 100, GFXFF);
+
+  background.pushSprite(0, 0);
+}
+
+void tDisplay_PortfolioScreen(unsigned long mElapsed)
+{
+  clock_data data = getClockData(mElapsed);
+  tDisplay_ValueScreen(data, data.portfolioEur.c_str(), "EUR | 0.217582 BTC");
+}
+
+void tDisplay_DaysTogetherScreen(unsigned long mElapsed)
+{
+  clock_data data = getClockData(mElapsed);
+  tDisplay_ValueScreen(data, data.daysTogether.c_str(), "Tage zusammen seit 22.09.2000");
+}
+
+void tDisplay_DaysMarriedScreen(unsigned long mElapsed)
+{
+  clock_data data = getClockData(mElapsed);
+  tDisplay_ValueScreen(data, data.daysMarried.c_str(), "Tage verheiratet seit 29.09.2007");
+}
+
 void tDisplay_LoadingScreen(void)
 {
   tft.fillScreen(TFT_BLACK);
@@ -270,7 +327,7 @@ void tDisplay_DoLedStuff(unsigned long frame)
 {
 }
 
-CyclicScreenFunction tDisplayCyclicScreens[] = {tDisplay_MinerScreen, tDisplay_ClockScreen, tDisplay_GlobalHashScreen, tDisplay_BTCprice};
+CyclicScreenFunction tDisplayCyclicScreens[] = {tDisplay_BTCprice, tDisplay_MinerScreen, tDisplay_PortfolioScreen, tDisplay_DaysTogetherScreen, tDisplay_DaysMarriedScreen, tDisplay_ClockScreen, tDisplay_GlobalHashScreen};
 
 DisplayDriver tDisplayDriver = {
     tDisplay_Init,

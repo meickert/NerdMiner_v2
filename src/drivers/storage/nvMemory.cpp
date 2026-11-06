@@ -38,8 +38,17 @@ bool nvMemory::saveConfig(TSettings* Settings)
         json[JSON_SPIFFS_KEY_INVCOLOR] = Settings->invertColors;
         json[JSON_SPIFFS_KEY_BRIGHTNESS] = Settings->Brightness;
 
-        // Open config file
-        File configFile = SPIFFS.open(JSON_CONFIG_FILE, "w");
+        if (json.overflowed())
+        {
+            Serial.println(F("SPIFS: Config too large, not saved"));
+            return false;
+        }
+
+        // Atomar schreiben: erst in Temp-Datei, dann umbenennen. So bleibt bei
+        // Stromausfall waehrend des Schreibens die alte Konfiguration erhalten.
+        // (Der JSON-Inhalt wird bewusst nicht ins Serial-Log geschrieben: enthaelt Passwort.)
+        const char* tmpFile = "/config.tmp";
+        File configFile = SPIFFS.open(tmpFile, "w");
         if (!configFile)
         {
             // Error, file did not open
@@ -47,17 +56,22 @@ bool nvMemory::saveConfig(TSettings* Settings)
             return false;
         }
 
-        // Serialize JSON data to write to file
-        serializeJsonPretty(json, Serial);
-        Serial.print('\n');
         if (serializeJson(json, configFile) == 0)
         {
             // Error writing file
             Serial.println(F("SPIFS: Failed to write to file"));
+            configFile.close();
+            SPIFFS.remove(tmpFile);
             return false;
         }
         // Close file
         configFile.close();
+        SPIFFS.remove(JSON_CONFIG_FILE);
+        if (!SPIFFS.rename(tmpFile, JSON_CONFIG_FILE))
+        {
+            Serial.println(F("SPIFS: Failed to rename config file"));
+            return false;
+        }
         return true;
     };
     return false;
@@ -86,17 +100,26 @@ bool nvMemory::loadConfig(TSettings* Settings)
                 StaticJsonDocument<512> json;
                 DeserializationError error = deserializeJson(json, configFile);
                 configFile.close();
-                serializeJsonPretty(json, Serial);
-                Serial.print('\n');
+                // (JSON-Inhalt nicht ins Serial-Log: enthaelt Passwort)
                 if (!error)
                 {
                     Settings->PoolAddress = json[JSON_SPIFFS_KEY_POOLURL] | Settings->PoolAddress;
-                    strcpy(Settings->PoolPassword, json[JSON_SPIFFS_KEY_POOLPASS] | Settings->PoolPassword);
-                    strcpy(Settings->BtcWallet, json[JSON_SPIFFS_KEY_WALLETID] | Settings->BtcWallet);
+                    // strlcpy mit Laengenbegrenzung; nur kopieren, wenn Schluessel vorhanden
+                    // (sonst waere Quelle == Ziel, ueberlappendes strcpy).
+                    if (json.containsKey(JSON_SPIFFS_KEY_POOLPASS))
+                        strlcpy(Settings->PoolPassword, json[JSON_SPIFFS_KEY_POOLPASS] | "", sizeof(Settings->PoolPassword));
+                    if (json.containsKey(JSON_SPIFFS_KEY_WALLETID))
+                        strlcpy(Settings->BtcWallet, json[JSON_SPIFFS_KEY_WALLETID] | "", sizeof(Settings->BtcWallet));
                     if (json.containsKey(JSON_SPIFFS_KEY_POOLPORT))
-                        Settings->PoolPort = json[JSON_SPIFFS_KEY_POOLPORT].as<int>();
+                    {
+                        int port = json[JSON_SPIFFS_KEY_POOLPORT].as<int>();
+                        if (port > 0 && port <= 65535) Settings->PoolPort = port;
+                    }
                     if (json.containsKey(JSON_SPIFFS_KEY_TIMEZONE))
-                        Settings->Timezone = json[JSON_SPIFFS_KEY_TIMEZONE].as<int>();
+                    {
+                        int tz = json[JSON_SPIFFS_KEY_TIMEZONE].as<int>();
+                        if (tz >= -12 && tz <= 14) Settings->Timezone = tz;
+                    }
                     if (json.containsKey(JSON_SPIFFS_KEY_STATS2NV))
                         Settings->saveStats = json[JSON_SPIFFS_KEY_STATS2NV].as<bool>();
                     if (json.containsKey(JSON_SPIFFS_KEY_INVCOLOR)) {
