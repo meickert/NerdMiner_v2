@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdio.h>
 
+#define MAX_COINBASE_BYTES 1024
+
 #ifndef bswap_16
 #define bswap_16(a) ((((uint16_t) (a) << 8) & 0xff00) | (((uint16_t) (a) >> 8) & 0xff))
 #endif
@@ -122,15 +124,14 @@ bool isSha256Valid(const void* sha256)
 /****************** PREMINING CALCULATIONS ********************/
 
 
+// hash und target sind beide little endian (Byte 31 = hoechstwertig).
+// Gueltig, wenn hash <= target.
 bool checkValid(unsigned char* hash, unsigned char* target) {
   bool valid = true;
-  unsigned char diff_target[32];
-  memcpy(diff_target, &target, 32);
-  //convert target to little endian for comparison
-  reverse_bytes(diff_target, 32);
 
-  for(uint8_t i=31; i>=0; i--) {
-    if(hash[i] > diff_target[i]) {
+  for (int i = 31; i >= 0; i--) {
+    if (hash[i] < target[i]) break;
+    if (hash[i] > target[i]) {
       valid = false;
       break;
     }
@@ -182,7 +183,8 @@ void getNextExtranonce2(int extranonce2_size, char *extranonce2) {
 
 miner_data init_miner_data(void){
   
-  miner_data newMinerData; 
+  miner_data newMinerData = {};
+  newMinerData.valid = true;
   return newMinerData;
 }
 
@@ -195,46 +197,55 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     char target[TARGET_BUFFER_SIZE+1];
     memset(target, '0', TARGET_BUFFER_SIZE);
     int zeros = (int) strtol(mJob.nbits.substring(0, 2).c_str(), 0, 16) - 3;
-    memcpy(target + zeros - 2, mJob.nbits.substring(2).c_str(), mJob.nbits.length() - 2);
+    // Mantisse (6 Hex-Zeichen) steht rechtsbuendig vor 2*zeros Null-Zeichen
+    int target_pos = TARGET_BUFFER_SIZE - 6 - 2 * zeros;
+    if (mJob.nbits.length() == 8 && zeros >= 0 && target_pos >= 0) {
+      memcpy(target + target_pos, mJob.nbits.c_str() + 2, 6);
+    } else {
+      Serial.println("Invalid nbits, target set to 0");
+    }
     target[TARGET_BUFFER_SIZE] = 0;
     Serial.print("    target: "); Serial.println(target);
     
-    // bytearray target
-    size_t size_target = to_byte_array(target, 32, mMiner.bytearray_target);
-
-    for (size_t j = 0; j < 8; j++) {
-      mMiner.bytearray_target[j] ^= mMiner.bytearray_target[size_target - 1 - j];
-      mMiner.bytearray_target[size_target - 1 - j] ^= mMiner.bytearray_target[j];
-      mMiner.bytearray_target[j] ^= mMiner.bytearray_target[size_target - 1 - j];
-    }
+    // bytearray target: big endian -> little endian (wie der Hash)
+    to_byte_array(target, 32, mMiner.bytearray_target);
+    reverse_bytes(mMiner.bytearray_target, 32);
 
     // get extranonce2 - extranonce2 = hex(random.randint(0,2**32-1))[2:].zfill(2*extranonce2_size)
     //To review
     //char extranonce2_char[2 * mWorker.extranonce2_size+1];	
 	//mWorker.extranonce2.toCharArray(extranonce2_char, 2 * mWorker.extranonce2_size + 1);
     //getNextExtranonce2(mWorker.extranonce2_size, extranonce2_char);
-    if (mWorker.extranonce2_size == 2)
-        mWorker.extranonce2 = "0001";
-    else if (mWorker.extranonce2_size == 4)
-        mWorker.extranonce2 = "00000001";
-    else if (mWorker.extranonce2_size == 8)
-        mWorker.extranonce2 = "0000000000000001";
-    else
     {
-        Serial.println("Unknown extranonce2");
-        mWorker.extranonce2 = "00000001";
+        int en2_size = mWorker.extranonce2_size;
+        if (en2_size < 1 || en2_size > 16) {
+            Serial.println("Unknown extranonce2 size, using 4");
+            en2_size = 4;
+        }
+        char en2[33];
+        memset(en2, '0', 2 * en2_size);
+        en2[2 * en2_size - 1] = '1';
+        en2[2 * en2_size] = 0;
+        mWorker.extranonce2 = en2;
     }
     //mWorker.extranonce2 = "00000002";
     
     //get coinbase - coinbase_hash_bin = hashlib.sha256(hashlib.sha256(binascii.unhexlify(coinbase)).digest()).digest()
     // Use char buffer instead of String concatenation to avoid memory leaks
-    static char coinbase_buffer[512]; // Static buffer to avoid repeated allocation
+    static char coinbase_buffer[2 * MAX_COINBASE_BYTES + 1];
+    static uint8_t bytearray[MAX_COINBASE_BYTES];
+    size_t coinbase_chars = mJob.coinb1.length() + mWorker.extranonce1.length() +
+                            mWorker.extranonce2.length() + mJob.coinb2.length();
+    if (coinbase_chars > 2 * MAX_COINBASE_BYTES) {
+        Serial.println("Coinbase too large, job skipped");
+        mMiner.valid = false;
+        return mMiner;
+    }
     snprintf(coinbase_buffer, sizeof(coinbase_buffer), "%s%s%s%s", 
              mJob.coinb1.c_str(), mWorker.extranonce1.c_str(), 
              mWorker.extranonce2.c_str(), mJob.coinb2.c_str());
     Serial.print("    coinbase: "); Serial.println(coinbase_buffer);
     size_t str_len = strlen(coinbase_buffer)/2;
-    uint8_t bytearray[str_len];
 
     size_t res = to_byte_array(coinbase_buffer, str_len*2, bytearray);
 
@@ -276,8 +287,13 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
     byte merkle_concatenated[32 * 2];
     for (size_t k=0; k < mJob.merkle_branch.size(); k++) {
         const char* merkle_element = (const char*) mJob.merkle_branch[k];
-        uint8_t bytearray[32];
-        size_t res = to_byte_array(merkle_element, 64, bytearray);
+        uint8_t bytearray[32] = {0};
+        if (merkle_element == NULL || strlen(merkle_element) != 64) {
+            Serial.println("Invalid merkle branch element, job skipped");
+            mMiner.valid = false;
+            return mMiner;
+        }
+        size_t res = to_byte_array(merkle_element ? merkle_element : "", 64, bytearray);
 
         #ifdef DEBUG_MINING
         Serial.print("    merkle element    "); Serial.print(k); Serial.print(": "); Serial.println(merkle_element);
@@ -321,7 +337,7 @@ miner_data calculateMiningData(mining_subscribe& mWorker, mining_job mJob){
       Serial.printf("%02x", mMiner.merkle_result[i]);
       snprintf(&merkle_root[i*2], 3, "%02x", mMiner.merkle_result[i]);
     }
-    merkle_root[65] = 0;
+    merkle_root[64] = 0;
     Serial.println("");
 
     // calculate blockheader

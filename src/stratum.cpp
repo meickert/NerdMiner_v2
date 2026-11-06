@@ -56,9 +56,9 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     // Subscribe
     id = 1; //Initialize id messages
     #ifndef HAN
-    sprintf(payload, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
+    snprintf(payload, sizeof(payload), "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"NerdMinerV2/%s\"]}\n", id, CURRENT_VERSION);
     #else
-    sprintf(payload, "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"HAN_SOLOminer/%s\"]}\n", id, CURRENT_VERSION);
+    snprintf(payload, sizeof(payload), "{\"id\": %u, \"method\": \"mining.subscribe\", \"params\": [\"HAN_SOLOminer/%s\"]}\n", id, CURRENT_VERSION);
     #endif
     
     Serial.printf("[WORKER] ==> Mining subscribe\n");
@@ -122,7 +122,7 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
 
     // Authorize
     id = getNextId(id);
-    sprintf(payload, "{\"params\": [\"%s\", \"%s\"], \"id\": %u, \"method\": \"mining.authorize\"}\n", 
+    snprintf(payload, sizeof(payload), "{\"params\": [\"%s\", \"%s\"], \"id\": %u, \"method\": \"mining.authorize\"}\n", 
       user, pass, id);
     
     Serial.printf("[WORKER] ==> Autorize work\n");
@@ -212,13 +212,13 @@ bool tx_mining_submit(WiFiClient& client, mining_subscribe mWorker, mining_job m
     // Submit
     id = getNextId(id);
     submit_id = id;
-    sprintf(payload, "{\"id\":%u,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
+    snprintf(payload, sizeof(payload), "{\"id\":%u,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%08lx\"]}\n",
         id,
         mWorker.wName,//"bc1qvv469gmw4zz6qa4u4dsezvrlmqcqszwyfzhgwj", //mWorker.name,
         mJob.job_id.c_str(),
         mWorker.extranonce2.c_str(),
         mJob.ntime.c_str(),
-        String(nonce, HEX).c_str()
+        nonce
         );
     Serial.print("  Sending  : "); Serial.print(payload);
     client.print(payload);
@@ -248,7 +248,7 @@ bool tx_suggest_difficulty(WiFiClient& client, double difficulty)
     char payload[BUFFER] = {0};
 
     id = getNextId(id);
-    sprintf(payload, "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
+    snprintf(payload, sizeof(payload), "{\"id\":%d,\"method\":\"mining.suggest_difficulty\",\"params\":[%.10g]}\n", id, difficulty);
     
     Serial.print("  Sending  : "); Serial.print(payload);
     return client.print(payload);

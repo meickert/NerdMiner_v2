@@ -87,14 +87,14 @@ bool checkPoolConnection(void) {
   //Resolve first time pool DNS and save IP
   if(serverIP == IPAddress(1,1,1,1)) {
     WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    Serial.printf("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString());
+    Serial.printf("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString().c_str());
   }
 
   //Try connecting pool IP
   if (!client.connect(serverIP, Settings.PoolPort)) {
     Serial.println("Imposible to connect to : " + Settings.PoolAddress);
     WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    Serial.printf("Resolved DNS got: %s\n", serverIP.toString());
+    Serial.printf("Resolved DNS got: %s\n", serverIP.toString().c_str());
     return false;
   }
 
@@ -251,6 +251,15 @@ void runStratumWorker(void *name) {
   uint32_t job_pool = 0xFFFFFFFF;
   uint32_t last_job_time = millis();
 
+  // Muessen die gesamte Task-Laufzeit leben: Nachfuell-Jobs lesen sie in
+  // Iterationen, in denen kein MINING_NOTIFY verarbeitet wurde.
+  uint32_t hw_midstate[8] = {0};
+  uint32_t diget_mid[8] = {0};
+  uint32_t bake[16] = {0};
+  #if defined(CONFIG_IDF_TARGET_ESP32)
+  uint8_t sha_buffer_swap[128] = {0};
+  #endif
+
   while(true) {
       
     if(WiFi.status() != WL_CONNECTED){
@@ -282,8 +291,8 @@ void runStratumWorker(void *name) {
         continue; 
       }
       
-      strcpy(mWorker.wName, Settings.BtcWallet);
-      strcpy(mWorker.wPass, Settings.PoolPassword);
+      strlcpy(mWorker.wName, Settings.BtcWallet, sizeof(mWorker.wName));
+      strlcpy(mWorker.wPass, Settings.PoolPassword, sizeof(mWorker.wPass));
       // STEP 2: Pool authorize work (Block Info)
       tx_mining_auth(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
       //tx_mining_auth2(client, mWorker.wName, mWorker.wPass); //Don't verifies authoritzation, TODO
@@ -320,13 +329,6 @@ void runStratumWorker(void *name) {
       }
     }
 
-    uint32_t hw_midstate[8];
-    uint32_t diget_mid[8];
-    uint32_t bake[16];
-    #if defined(CONFIG_IDF_TARGET_ESP32)
-    uint8_t sha_buffer_swap[128];
-    #endif
-
     //Read pending messages from pool
     while(client.connected() && client.available())
     {
@@ -358,6 +360,10 @@ void runStratumWorker(void *name) {
 
                                           //Prepare data for new jobs
                                           mMiner=calculateMiningData(mWorker, mJob);
+                                          if (!mMiner.valid) {
+                                            Serial.println("  Job verworfen (ungueltige Daten)");
+                                            break;
+                                          }
 
                                           memset(mMiner.bytearray_blockheader+80, 0, 128-80);
                                           mMiner.bytearray_blockheader[80] = 0x80;
