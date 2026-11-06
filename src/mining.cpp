@@ -86,15 +86,26 @@ bool checkPoolConnection(void) {
   
   //Resolve first time pool DNS and save IP
   if(serverIP == IPAddress(1,1,1,1)) {
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
+    IPAddress resolved;
+    if (WiFi.hostByName(Settings.PoolAddress.c_str(), resolved) != 1) {
+      Serial.println("DNS resolution failed for " + Settings.PoolAddress);
+      return false;
+    }
+    serverIP = resolved;
     Serial.printf("Resolved DNS and save ip (first time) got: %s\n", serverIP.toString().c_str());
   }
 
   //Try connecting pool IP
   if (!client.connect(serverIP, Settings.PoolPort)) {
     Serial.println("Imposible to connect to : " + Settings.PoolAddress);
-    WiFi.hostByName(Settings.PoolAddress.c_str(), serverIP);
-    Serial.printf("Resolved DNS got: %s\n", serverIP.toString().c_str());
+    // IP neu aufloesen; bei Fehlschlag alte IP behalten (nicht mit Muell ueberschreiben)
+    IPAddress resolved;
+    if (WiFi.hostByName(Settings.PoolAddress.c_str(), resolved) == 1) {
+      serverIP = resolved;
+      Serial.printf("Resolved DNS got: %s\n", serverIP.toString().c_str());
+    } else {
+      Serial.println("DNS resolution failed, keeping old IP");
+    }
     return false;
   }
 
@@ -349,7 +360,14 @@ void runStratumWorker(void *name) {
                                           }
                                           //Increse templates readed
                                           templates++;
-                                          job_pool++;
+                                          // Monoton steigende Job-ID ueber Reconnects hinweg: veraltete Ergebnisse
+                                          // einer frueheren Verbindung koennen so nie zu einem neuen Job passen.
+                                          // (0xFFFFFFFF bleibt der "kein Job"-Marker.)
+                                          {
+                                            static uint32_t s_job_counter = 0;
+                                            job_pool = s_job_counter++;
+                                            if (s_job_counter == 0xFFFFFFFF) s_job_counter = 0;
+                                          }
                                           s_working_current_job_id = job_pool & 0xFF; //Terminate current job in thread
 
                                           last_job_time = millis();

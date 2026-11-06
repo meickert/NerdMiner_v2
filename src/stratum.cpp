@@ -67,8 +67,20 @@ bool tx_mining_subscribe(WiFiClient& client, mining_subscribe& mSubscribe)
     
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
     
-    String line = client.readStringUntil('\n');
-    if(!parse_mining_subscribe(line, mSubscribe)) return false;
+    // Pool kann vor der Subscribe-Antwort schon andere Nachrichten schicken:
+    // bis zu 5 Zeilen lesen und die mit passender id (== Subscribe-id) nehmen.
+    bool gotSubscribe = false;
+    for (int attempt = 0; attempt < 5 && !gotSubscribe; attempt++) {
+        String line = client.readStringUntil('\n');
+        if (line.length() == 0) break; // Timeout, nichts mehr da
+        if (parse_extract_id(line) != 1) {
+            Serial.print("  Skipping non-subscribe line: "); Serial.println(line);
+            continue;
+        }
+        if (!parse_mining_subscribe(line, mSubscribe)) return false;
+        gotSubscribe = true;
+    }
+    if (!gotSubscribe) return false;
 
   
     Serial.print("    sub_details: "); Serial.println(mSubscribe.sub_details);
