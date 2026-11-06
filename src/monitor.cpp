@@ -32,6 +32,7 @@ bool invertColors = false;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP, "europe.pool.ntp.org", 3600, 60000);
 unsigned int bitcoin_price=0;
+unsigned int bitcoin_price_eur=0;
 String current_block = "793261";
 global_data gData;
 pool_data pData;
@@ -185,6 +186,9 @@ String getBTCprice(void){
           
             if (doc.containsKey("bitcoin") && doc["bitcoin"].containsKey("usd")) {
                 bitcoin_price = doc["bitcoin"]["usd"];
+            }
+            if (doc.containsKey("bitcoin") && doc["bitcoin"].containsKey("eur")) {
+                bitcoin_price_eur = doc["bitcoin"]["eur"];
             }
 
             doc.clear();
@@ -358,6 +362,47 @@ mining_data getMiningData(unsigned long mElapsed)
   return data;
 }
 
+// Portfoliowert in EUR, mit Punkt als Tausendertrenner (z.B. "19.512"); "--" solange kein Kurs da ist
+String getPortfolioEur(void)
+{
+  if (bitcoin_price_eur == 0) return String("--");
+  unsigned long value = (unsigned long)((double)bitcoin_price_eur * PORTFOLIO_BTC + 0.5);
+  char raw[16];
+  snprintf(raw, sizeof(raw), "%lu", value);
+  char out[24];
+  int len = strlen(raw), o = 0;
+  for (int i = 0; i < len && o < (int)sizeof(out) - 2; i++) {
+    if (i > 0 && (len - i) % 3 == 0) out[o++] = '.';
+    out[o++] = raw[i];
+  }
+  out[o] = 0;
+  return String(out);
+}
+
+// Tage seit einem Datum (lokale Zeit wie getDate()); "--" solange keine NTP-Zeit da ist
+static long daysFromCivil(int y, unsigned m, unsigned d)
+{
+  y -= m <= 2;
+  const long era = (y >= 0 ? y : y - 399) / 400;
+  const unsigned yoe = (unsigned)(y - era * 400);
+  const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097L + (long)doe - 719468L;
+}
+
+String getDaysSince(int year, int month, int day)
+{
+  if (initialTime == 0) return String("--");
+  unsigned long elapsedTime = (millis() - mTriggerUpdate) / 1000;
+  time_t now = initialTime + elapsedTime;
+  struct tm *tm = localtime(&now);
+  long days = daysFromCivil(tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday) - daysFromCivil(year, month, day);
+  if (days < 0) days = 0;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%ld", days);
+  return String(buf);
+}
+
 clock_data getClockData(unsigned long mElapsed)
 {
   clock_data data;
@@ -369,6 +414,9 @@ clock_data getClockData(unsigned long mElapsed)
   data.blockHeight = getBlockHeight();
   data.currentTime = getTime();
   data.currentDate = getDate();
+  data.portfolioEur = getPortfolioEur();
+  data.daysTogether = getDaysSince(2000, 9, 22);
+  data.daysMarried = getDaysSince(2007, 9, 29);
 
   return data;
 }
