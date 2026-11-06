@@ -166,7 +166,8 @@ void setup()
     xTaskCreate(minerWorkerHw, "MinerHw-0", 3584, (void*)0, 3, &minerTask1); // Reduced for ESP32 classic
     //xTaskCreate(minerWorkerSw, "MinerSw-0", 5000, (void*)0, 1, &minerTask1); // Reduced for ESP32 classic
     #else
-    xTaskCreate(minerWorkerHw, "MinerHw-0", 4096, (void*)0, 3, &minerTask1);
+    // HW-Miner auf Core 0 (WLAN-Core), SW-Miner auf Core 1: gemessen +1% und gleichmaessiger als ungepinnt
+    xTaskCreatePinnedToCore(minerWorkerHw, "MinerHw-0", 4096, (void*)0, 3, &minerTask1, 0);
     #endif
   #else
     #if defined(CONFIG_IDF_TARGET_ESP32)
@@ -181,7 +182,7 @@ void setup()
   #if defined(CONFIG_IDF_TARGET_ESP32)
   xTaskCreate(minerWorkerSw, "MinerSw-1", 5000, (void*)1, 1, &minerTask2); // Reduced for ESP32 classic
   #else
-  xTaskCreate(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 1, &minerTask2);
+  xTaskCreatePinnedToCore(minerWorkerSw, "MinerSw-1", 6000, (void*)1, 1, &minerTask2, 1);
   #endif
   esp_task_wdt_add(minerTask2);
 #endif
