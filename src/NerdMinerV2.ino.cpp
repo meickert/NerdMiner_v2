@@ -131,6 +131,8 @@ void setup()
   // Higher prio monitor task
   Serial.println("");
   Serial.println("Initiating tasks...");
+  /******** MONITOR SETUP (vor dem Start der Tasks, sonst Race mit dem Monitor-Task) *****/
+  setup_monitor();
   static const char monitor_name[] = "(Monitor)";
   #if defined(CONFIG_IDF_TARGET_ESP32)
   // Increased stack for ESP32 classic due to NVS operations  
@@ -185,9 +187,6 @@ void setup()
 #endif
 
   vTaskPrioritySet(NULL, 4);
-
-  /******** MONITOR SETUP *****/
-  setup_monitor();
 }
 
 void app_error_fault_handler(void *arg) {
