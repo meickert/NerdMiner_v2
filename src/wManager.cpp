@@ -351,8 +351,7 @@ void init_WifiManager()
 
         // Copy the string value
         strlcpy(Settings.PoolPassword, password_text_box.getValue(), sizeof(Settings.PoolPassword));
-        Serial.print("poolPassword: ");
-        Serial.println(Settings.PoolPassword);
+        Serial.println("poolPassword: ******");
 
         // Copy the string value
         strlcpy(Settings.BtcWallet, addr_text_box.getValue(), sizeof(Settings.BtcWallet));
@@ -393,8 +392,7 @@ void init_WifiManager()
 
     // Copy the string value
     strlcpy(Settings.PoolPassword, password_text_box.getValue(), sizeof(Settings.PoolPassword));
-    Serial.print("poolPassword: ");
-    Serial.println(Settings.PoolPassword);
+    Serial.println("poolPassword: ******");
 
     // Copy the string value
     strlcpy(Settings.BtcWallet, addr_text_box.getValue(), sizeof(Settings.BtcWallet));

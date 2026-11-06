@@ -126,7 +126,8 @@ bool tx_mining_auth(WiFiClient& client, const char * user, const char * pass)
       user, pass, id);
     
     Serial.printf("[WORKER] ==> Autorize work\n");
-    Serial.print("  Sending  : "); Serial.println(payload);
+    // Pool-Passwort nicht ins Log
+    Serial.printf("  Sending  : authorize for user %s (password hidden)\n", user);
     client.print(payload);
 
     vTaskDelay(200 / portTICK_PERIOD_MS); //Small delay
