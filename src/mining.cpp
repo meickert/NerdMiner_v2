@@ -725,6 +725,45 @@ static inline void nerd_sha_ll_fill_text_block_sha256_inter()
   REG_WRITE(&reg_addr_buf[15], 0x00010000);
 }
 
+// Schnelle Varianten: Die Textwoerter 9..14 sind in beiden Bloecken 0 und bleiben
+// zwischen den Bloecken unveraendert (Padding). Nur nach dem ersten kompletten
+// Durchlauf eines Jobs verwenden (Registerzustand vorher unbekannt).
+static inline void nerd_sha_ll_fill_text_block_sha256_fast(const void *input_text, uint32_t nonce)
+{
+    uint32_t *data_words = (uint32_t *)input_text;
+    uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
+
+    REG_WRITE(&reg_addr_buf[0], data_words[0]);
+    REG_WRITE(&reg_addr_buf[1], data_words[1]);
+    REG_WRITE(&reg_addr_buf[2], data_words[2]);
+    REG_WRITE(&reg_addr_buf[3], nonce);
+    REG_WRITE(&reg_addr_buf[4], 0x00000080);
+    REG_WRITE(&reg_addr_buf[5], 0x00000000);
+    REG_WRITE(&reg_addr_buf[6], 0x00000000);
+    REG_WRITE(&reg_addr_buf[7], 0x00000000);
+    REG_WRITE(&reg_addr_buf[8], 0x00000000);
+    REG_WRITE(&reg_addr_buf[15], 0x80020000);
+}
+
+static inline void nerd_sha_ll_fill_text_block_sha256_inter_fast()
+{
+  uint32_t *reg_addr_buf = (uint32_t *)(SHA_TEXT_BASE);
+
+  DPORT_INTERRUPT_DISABLE();
+  REG_WRITE(&reg_addr_buf[0], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 0 * 4));
+  REG_WRITE(&reg_addr_buf[1], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 1 * 4));
+  REG_WRITE(&reg_addr_buf[2], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 2 * 4));
+  REG_WRITE(&reg_addr_buf[3], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 3 * 4));
+  REG_WRITE(&reg_addr_buf[4], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 4 * 4));
+  REG_WRITE(&reg_addr_buf[5], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 5 * 4));
+  REG_WRITE(&reg_addr_buf[6], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 6 * 4));
+  REG_WRITE(&reg_addr_buf[7], DPORT_SEQUENCE_REG_READ(SHA_H_BASE + 7 * 4));
+  DPORT_INTERRUPT_RESTORE();
+
+  REG_WRITE(&reg_addr_buf[8], 0x00000080);
+  REG_WRITE(&reg_addr_buf[15], 0x00010000);
+}
+
 static inline void nerd_sha_ll_read_digest(void* ptr)
 {
   DPORT_INTERRUPT_DISABLE();
@@ -840,18 +879,26 @@ void minerWorkerHw(void * task_id)
       esp_sha_acquire_hardware();
       REG_WRITE(SHA_MODE_REG, SHA2_256);
       uint32_t nend = job->nonce_start + job->nonce_count;
+      bool text_padding_ready = false; // erster Durchlauf: alle Textwoerter schreiben
       for (uint32_t n = job->nonce_start; n < nend; ++n)
       {
         //nerd_sha_hal_wait_idle();
         nerd_sha_ll_write_digest(digest_mid);
         //nerd_sha_hal_wait_idle();
-        nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
+        if (text_padding_ready)
+          nerd_sha_ll_fill_text_block_sha256_fast(sha_buffer, n);
+        else
+          nerd_sha_ll_fill_text_block_sha256(sha_buffer, n);
         //sha_ll_continue_block(SHA2_256);
         REG_WRITE(SHA_CONTINUE_REG, 1);
         
         sha_ll_load(SHA2_256);
         nerd_sha_hal_wait_idle();
-        nerd_sha_ll_fill_text_block_sha256_inter();
+        if (text_padding_ready)
+          nerd_sha_ll_fill_text_block_sha256_inter_fast();
+        else
+          nerd_sha_ll_fill_text_block_sha256_inter();
+        text_padding_ready = true;
         //sha_ll_start_block(SHA2_256);
         REG_WRITE(SHA_START_REG, 1);
         sha_ll_load(SHA2_256);
